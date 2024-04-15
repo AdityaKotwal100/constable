@@ -35,14 +35,14 @@ class TestDebugDecorator(unittest.TestCase):
         @constable.trace('a', verbose=True, show_warnings=True)
         def datatype_change_function(a):
             a = a + 1
-            a = []
-            a = [1,2,3]
-            a = {}
-            a = (1,2)
+            a = []             # Warning 1
+            a = [1,2,3]         
+            a = {}             # Warning 2
+            a = (1,2)          # Warning 3
             a = ()
-            a = {1,2}
-            a = "Hi"
-            a = 3.0
+            a = {1,2}          # Warning 4
+            a = "Hi"           # Warning 5
+            a = 3.0            # Warning 6
             return a
 
         f = StringIO()
@@ -50,22 +50,25 @@ class TestDebugDecorator(unittest.TestCase):
             datatype_change_function(1)
         output = f.getvalue()
         lines = output.split('\n')
-        count = sum('warning' in line.lower() for line in lines)
+        count = sum('warning: ' in line.lower() for line in lines)
 
-        self.assertEqual(count, 7)
+        self.assertEqual(count, 6)
         
+        count = sum('warnings: 6' in line.lower() for line in lines)
+        
+        self.assertEqual(count, 1)
 
-    def test_decorator_multiple_datatype_check(self):
+    def test_decorator_multiple_parameters_datatype_check(self):
         @constable.trace('a', 'b', verbose=True, show_warnings=True)
         def datatype_change_function(a, b):
-            a = []
+            a = []              # Warning 1
             a = [1,2,3]
-            a = {}
-            b = (1,2)
+            a = {}              # Warning 2
+            b = (1,2)           # Warning 3
             b = ()
-            b = {1,2}
-            b = "Hi"
-            b = 3.0
+            b = {1,2}           # Warning 4
+            b = "Hi"            # Warning 5
+            b = 3.0             # Warning 6
             return a, b
 
         f = StringIO()
@@ -74,6 +77,29 @@ class TestDebugDecorator(unittest.TestCase):
         output = f.getvalue()
         lines = output.split('\n')
         
-        count = sum('warning' in line.lower() for line in lines)
+        count = sum('warning: ' in line.lower() for line in lines)
         
-        self.assertEqual(count, 5)
+        self.assertEqual(count, 6)
+
+        count = sum('warnings: 6' in line.lower() for line in lines)
+        
+        self.assertEqual(count, 1)
+
+    def test_decorator_no_datatype_change_check(self):
+        @constable.trace('a', verbose=True, show_warnings=True)
+        def no_datatype_change_function(a):
+            a = a + 1
+            return a
+
+        f = StringIO()
+        with redirect_stdout(f):
+            no_datatype_change_function(1)
+        output = f.getvalue()
+        lines = output.split('\n')
+        count = sum('warning: ' in line.lower() for line in lines)
+
+        self.assertEqual(count, 0)
+        
+        count = sum('warnings: 0' in line.lower() for line in lines)
+        
+        self.assertEqual(count, 1)

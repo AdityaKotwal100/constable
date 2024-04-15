@@ -121,7 +121,7 @@ class AstProcessor:
 
     def check_datatype_change(self, target, node, datatype_map):
         new_type = self.__get_value_type(node.value)
-        if not datatype_map[target.id]:
+        if target.id not in datatype_map or not datatype_map[target.id]:
             datatype_map[target.id] = new_type
         elif datatype_map[target.id] != new_type:
             old_type = datatype_map[target.id]
@@ -174,7 +174,9 @@ class AstProcessor:
             i += 1
 
     def insert_print_statements(self, variables):
-        datatype_map = {key: None for key in variables}
+        datatype_map = {
+            key: type(args_) for key, args_ in zip(variables, self.fn_wrapper.args)
+        }
         module = self.get_ast_module()
         for node in module.body[0].body:
             # skip any statement apart from assignment
