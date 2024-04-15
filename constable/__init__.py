@@ -10,6 +10,7 @@ __all__ = ['trace']
 
 green = lambda x: f"\033[92m{x}\033[0m"
 blue = lambda x: f"\033[94m{x}\033[0m"
+yellow = lambda x: f"\033[93m{x}\033[0m"
 
 
 def trunc(s: str, max_len: int, dot=False):
@@ -65,13 +66,16 @@ class AstProcessor:
         fn_wrapper: FunctionWrapper,
         verbose=True,
         use_spaces=True,
+        show_warnings=True,
         max_len=None
     ):
         self.fn_wrapper = fn_wrapper
         self.max_len = max_len
         self.use_spaces = use_spaces
         self.verbose = verbose
+        self.show_warnings = show_warnings
         self.module = None
+        self.warnings = 0
 
     def get_ast_module(self):
         if self.module is not None:
@@ -92,25 +96,65 @@ class AstProcessor:
         start_line_num = self.fn_wrapper.start_line_num + node_line_num
         return line, start_line_num
 
-    def get_statements_to_insert(self, target, node):
+    def __get_value_type(self,value_node):
+        #TODO: Need to expand
+        if isinstance(value_node, ast.Constant):
+            return type(value_node.value)
+        elif isinstance(value_node, ast.List):
+            # element_types = {self.__get_value_type(el) for el in value_node.elts}
+            return list
+        elif isinstance(value_node, ast.Dict):
+            # key_types = {self.__get_value_type(key) for key in value_node.keys}
+            # value_types = {self.__get_value_type(value) for value in value_node.values}
+            return dict
+        elif isinstance(value_node, ast.Tuple):
+            # element_types = {self.__get_value_type(el) for el in value_node.elts}
+            return tuple
+        elif isinstance(value_node, ast.Set):
+            # element_types = {self.__get_value_type(el) for el in value_node.elts}
+            return set
+        if isinstance(value_node, ast.BinOp):
+            return type(value_node.right.value)
+        else:
+            # Extend with more types as necessary
+            return type(None)
+
+    def check_datatype_change(self, target, node, datatype_map):
+        new_type = self.__get_value_type(node.value)
+        if not datatype_map[target.id]:
+            datatype_map[target.id] = new_type
+        elif datatype_map[target.id] != new_type:
+            old_type = datatype_map[target.id]
+            datatype_map[target.id] = new_type
+            return True, str(old_type), str(new_type)
+        return False, None, None
+        
+    def get_statements_to_insert(self, target, node, datatype_map):
         line, line_num = self.get_source_code_and_line_number(node.lineno)
         debug_prefix = self.fn_wrapper.debug_prefix(line_num=line_num)
-        if self.verbose:
-            return [
-                f'print("{debug_prefix}")',
-                f'print("   ", {trunc(repr(line), 80, True)})',
-                f'print("    {target.id} =", green(trunc(str({target.id}), {self.max_len})))',
-                f'print("    type({target.id}) =", green(str(type({target.id}))))',
-            ]
-        else:
+        if not self.verbose:
             return [
                 f'print("{debug_prefix} - {green(target.id)}", green("="), green(trunc(str({target.id}), {self.max_len})))',
             ]
+        
+        resuting_statements = [
+            f'print("{debug_prefix}")',
+            f'print("   ", {trunc(repr(line), 80, True)})',
+            f'print("    {target.id} =", green(trunc(str({target.id}), {self.max_len})))',
+            f'print("    type({target.id}) =", green(str(type({target.id}))))'
+        ]
+        if self.show_warnings:
+            type_changed, old_type, new_type = self.check_datatype_change(target, node, datatype_map)
+            if type_changed:
+                self.warnings += 1
+                new_statement = [f'print("   ",    yellow("warning: type of {target.id} changed from {old_type} to {new_type}"))']
+                resuting_statements.extend(new_statement)
+        return resuting_statements
 
-    def get_nodes_to_insert(self, target, node):
+    def get_nodes_to_insert(self, target, node, datatype_map):
         empty_print_node = ast.parse(f'print("")').body[0]
         nodes_to_insert = [empty_print_node] if self.use_spaces else []
-        statements = self.get_statements_to_insert(target, node)
+        statements = self.get_statements_to_insert(target, node, datatype_map)
         for stmnt in statements:
             node_to_insert = ast.parse(stmnt).body[0]
             nodes_to_insert.append(node_to_insert)
@@ -130,6 +174,7 @@ class AstProcessor:
             i += 1
 
     def insert_print_statements(self, variables):
+        datatype_map = {key: None for key in variables}
         module = self.get_ast_module()
         for node in module.body[0].body:
             # skip any statement apart from assignment
@@ -145,7 +190,7 @@ class AstProcessor:
 
             for target in targets:
                 if isinstance(target, ast.Name) and target.id in variables:
-                    nodes_to_insert = self.get_nodes_to_insert(target, node)
+                    nodes_to_insert = self.get_nodes_to_insert(target, node, datatype_map)
                     self.insert_nodes(nodes_to_insert, node)
 
 
@@ -169,7 +214,11 @@ class Executor:
         print(f"    args: {green(self.fn_wrapper.args)}")
         print(f"    kwargs: {green(self.fn_wrapper.kwargs)}")
         print(f"    returned: {green(trunc(result, self.max_len))}")
-        print(f"    execution time: {green(f'{runtime:.8f} seconds')}\n")
+        if self.processor.show_warnings:
+            print(f"    execution time: {green(f'{runtime:.8f} seconds')}")
+            print(f"    warnings: {self.processor.warnings}\n")
+        else:
+            print(f"    execution time: {green(f'{runtime:.8f} seconds')}\n")
 
     def execute(self):
         self.processor.insert_print_statements(self.variables)
@@ -197,6 +246,8 @@ def trace(
     verbose=True,
     use_spaces=True,
     max_len=None,
+    show_warnings=False,
+    
 ):
     """
     An experimental decorator for tracing function execution using AST.
@@ -220,7 +271,7 @@ def trace(
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             fn_wrapper = FunctionWrapper(func, args, kwargs)
-            processor = AstProcessor(fn_wrapper, verbose, use_spaces, max_len)
+            processor = AstProcessor(fn_wrapper, verbose, use_spaces,show_warnings, max_len,)
             executor = Executor(processor, variables, exec_info)
             ret = executor.execute()
             return ret

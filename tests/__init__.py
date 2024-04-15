@@ -30,3 +30,50 @@ class TestDebugDecorator(unittest.TestCase):
         output = f.getvalue()
         num_lines = len(output.split('\n')) - 1 
         self.assertEqual(num_lines, 22)
+
+    def test_decorator_datatype_check(self):
+        @constable.trace('a', verbose=True, show_warnings=True)
+        def datatype_change_function(a):
+            a = a + 1
+            a = []
+            a = [1,2,3]
+            a = {}
+            a = (1,2)
+            a = ()
+            a = {1,2}
+            a = "Hi"
+            a = 3.0
+            return a
+
+        f = StringIO()
+        with redirect_stdout(f):
+            datatype_change_function(1)
+        output = f.getvalue()
+        lines = output.split('\n')
+        count = sum('warning' in line.lower() for line in lines)
+
+        self.assertEqual(count, 7)
+        
+
+    def test_decorator_multiple_datatype_check(self):
+        @constable.trace('a', 'b', verbose=True, show_warnings=True)
+        def datatype_change_function(a, b):
+            a = []
+            a = [1,2,3]
+            a = {}
+            b = (1,2)
+            b = ()
+            b = {1,2}
+            b = "Hi"
+            b = 3.0
+            return a, b
+
+        f = StringIO()
+        with redirect_stdout(f):
+            datatype_change_function(1,2)
+        output = f.getvalue()
+        lines = output.split('\n')
+        
+        count = sum('warning' in line.lower() for line in lines)
+        
+        self.assertEqual(count, 5)
